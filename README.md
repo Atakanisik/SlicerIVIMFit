@@ -75,7 +75,8 @@ Import your DWI dataset (DICOM, NRRD, or Sequence) into 3D Slicer.
     1.  Extract data from the ROI.
     2.  Perform voxel-wise fitting (generating maps).
     3.  Perform ROI-averaged fitting (generating statistics).
-* You can change view layout and obsreve fitting curve with PlotCharts.    
+* You can change view layout and obsreve fitting curve with PlotCharts.
+* You can change shown map by selecting in "Data" section.    
 ---
 ### 🖼️ Workflow Gallery
 
@@ -90,7 +91,7 @@ Import your DWI dataset (DICOM, NRRD, or Sequence) into 3D Slicer.
   <strong>Step 2: Analysis Results (Maps & Plots)</strong><br>
   <img src="Screenshots/Map_Plot_Screen.png" alt="Analysis Results View" width="800">
   <br>
-  <em> Generated Diffusion (D) Map (left) and the smooth ROI fitting curve with calculated parameters (bottom-right).</em>
+  <em> Generated Diffusion (D) Map and the ROI fitting curve with calculated parameters .</em>
 </p>
 ---
 ---
@@ -123,4 +124,5 @@ This extension automatically manages the following Python dependencies:
 If you use this software in your research, please cite the associated repository or publication[10.36948/ijfmr.2025.v07i05.56036](https://doi.org/10.36948/ijfmr.2025.v07i05.56036).
 
 ---
+
 *Developed for the Slicer Community.*
