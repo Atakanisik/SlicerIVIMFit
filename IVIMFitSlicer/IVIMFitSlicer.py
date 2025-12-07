@@ -67,8 +67,7 @@ class IVIMFitSlicer(ScriptedLoadableModule):
     parent.dependencies = []
     parent.contributors = ["Atakan Isik"]
     parent.helpText = """
-    Grafik stili düzeltildi (LineType + Marker Style).
-    Tri-Exp Legend tüm parametreleri gösterir.
+    
     """
     parent.acknowledgementText = "Academic Research Tool."
 
@@ -518,4 +517,5 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
         futures = [ex.submit(worker, i*chunk_size) for i in range(n_chunks)]
         for i, f in enumerate(futures):
             idx, r = f.result(); results[idx:idx+len(r)] = r
+
             if progressBar: progressBar.setValue(i+1); slicer.app.processEvents()
