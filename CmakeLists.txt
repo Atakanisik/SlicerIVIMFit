@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 3.16.3...3.19.7 FATAL_ERROR)
+
+# Proje Adı (Repo ile uyumlu)
+project(IVIMFitSlicer)
+
+#-----------------------------------------------------------------------------
+# Extension Metadata
+#-----------------------------------------------------------------------------
+set(EXTENSION_HOMEPAGE "https://github.com/Atakanisik/SlicerIVIMFit")
+set(EXTENSION_CATEGORY "Diffusion")
+set(EXTENSION_CONTRIBUTORS "Atakan Isik (Baskent University)")
+set(EXTENSION_DESCRIPTION "Advanced IVIM Analysis tool with ROI-based fitting")
+set(EXTENSION_ICONURL "https://raw.githubusercontent.com/Atakanisik/SlicerIVIMFit/main/IVIMFitSlicer/Resources/Icons/IVIMFitSlicer.png")
+set(EXTENSION_SCREENSHOTURLS "https://raw.githubusercontent.com/Atakanisik/SlicerIVIMFit/main/README.md")
+set(EXTENSION_DEPENDS "NA")
+
+#-----------------------------------------------------------------------------
+# Dependencies
+#-----------------------------------------------------------------------------
+find_package(Slicer REQUIRED)
+include(${Slicer_USE_FILE})
+
+#-----------------------------------------------------------------------------
+# Modules
+#-----------------------------------------------------------------------------
+
+add_subdirectory(IVIMFitSlicer)
+
+
+include(${Slicer_EXTENSION_GENERATE_CONFIG})
+include(${Slicer_EXTENSION_CPACK})
