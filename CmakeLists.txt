@@ -11,7 +11,7 @@ set(EXTENSION_CATEGORY "Diffusion")
 set(EXTENSION_CONTRIBUTORS "Atakan Isik (Baskent University)")
 set(EXTENSION_DESCRIPTION "Advanced IVIM Analysis tool with ROI-based fitting")
 set(EXTENSION_ICONURL "https://raw.githubusercontent.com/Atakanisik/SlicerIVIMFit/main/IVIMFitSlicer/Resources/Icons/IVIMFitSlicer.png")
-set(EXTENSION_SCREENSHOTURLS "https://raw.githubusercontent.com/Atakanisik/SlicerIVIMFit/main/Screenshots/MainInterface.png" "https://raw.githubusercontent.com/Atakanisik/SlicerIVIMFit/main/Screenshots/Map_Plot_scree.png")
+set(EXTENSION_SCREENSHOTURLS "https://raw.githubusercontent.com/Atakanisik/SlicerIVIMFit/main/Screenshots/MainInterface.png" "https://raw.githubusercontent.com/Atakanisik/SlicerIVIMFit/main/Screenshots/Map_Plot_Screen.png")
 set(EXTENSION_DEPENDS "NA")
 
 #-----------------------------------------------------------------------------
@@ -30,5 +30,6 @@ add_subdirectory(IVIMFitSlicer)
 include(${Slicer_EXTENSION_GENERATE_CONFIG})
 
 include(${Slicer_EXTENSION_CPACK})
+
 
 
