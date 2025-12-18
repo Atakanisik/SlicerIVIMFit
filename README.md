@@ -119,7 +119,7 @@ This extension automatically manages the following Python dependencies:
 
 ---
 
-##Sample Data
+## 📄 Sample Data
 
 You can find Sample Data on Slicer's Sample Data Module
 
@@ -134,4 +134,5 @@ If you use this software in your research, please cite the associated repository
 ---
 
 *Developed for the Slicer Community.*
+
 
