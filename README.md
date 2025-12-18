@@ -117,6 +117,14 @@ This extension automatically manages the following Python dependencies:
 * `numpy`, `scipy`
 * `pydicom`
 
+---
+
+##Sample Data
+
+You can find Sample Data on Slicer's Sample Data Module
+
+---
+
 ## 📄 License & Citation
 
 **Author:** Atakan Isik (Baskent University)  
@@ -126,3 +134,4 @@ If you use this software in your research, please cite the associated repository
 ---
 
 *Developed for the Slicer Community.*
+
