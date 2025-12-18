@@ -8,70 +8,29 @@ import numpy as np
 import time
 import sys
 import inspect
-from concurrent.futures import ThreadPoolExecutor
 
-def install_dependencies():
-    needs_restart = False
-    
-    
-    try:
-        import pydicom
-    except ImportError:
-        slicer.util.showStatusMessage("Installing pydicom...")
-        slicer.util.pip_install("pydicom")
-        needs_restart = True
-
-    
-    try:
-        import ivimfit
-    except ImportError:
-        slicer.util.showStatusMessage("Installing ivimfit library...")
-        
-        slicer.util.pip_install("ivimfit") 
-        needs_restart = True
-        
-    
-    try:
-        import pymc
-    except ImportError:
-       
-        slicer.util.showStatusMessage("Installing ivimfit pymc...")
-        slicer.util.pip_install("pymc") 
-        pass 
-
-    if needs_restart:
-        slicer.util.showStatusMessage("Dependencies installed! Reloading...", 3000)
-
-
-install_dependencies()
-
-
-import pydicom
-try:
-    import ivimfit
-    from ivimfit import adc, biexp, segmented, triexp
-except ImportError:
-    
-    pass
-
-current_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-
-
+# -----------------------------------------------------------------------------
+# IVIMFitSlicer Main Class
+# -----------------------------------------------------------------------------
 class IVIMFitSlicer(ScriptedLoadableModule):
   def __init__(self, parent):
     ScriptedLoadableModule.__init__(self, parent)
     parent.title = "IVIMFit Slicer"
     parent.categories = ["Diffusion"]
     parent.dependencies = []
-    parent.contributors = ["Atakan Isik"]
+    parent.contributors = ["Atakan Isik (Baskent University)"]
     parent.helpText = """
-    
+    Advanced IVIM Analysis tool with ROI-based fitting, auto-scaling, and Siemens protocol support.
     """
-    parent.acknowledgementText = "Academic Research Tool."
+    parent.acknowledgementText = "This work is an academic research tool."
 
+  def setup(self):
+    # Modül yüklendiğinde Sample Data'yı kaydet
+    registerSampleData()
 
+# -----------------------------------------------------------------------------
+# IVIMFitSlicer Widget
+# -----------------------------------------------------------------------------
 class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   def __init__(self, parent=None):
     ScriptedLoadableModuleWidget.__init__(self, parent)
@@ -92,10 +51,10 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.inputSelector.nodeTypes = ["vtkMRMLScalarVolumeNode", "vtkMRMLDiffusionWeightedVolumeNode", "vtkMRMLMultiVolumeNode", "vtkMRMLSequenceNode"]
     self.inputSelector.selectNodeUponCreation = True
     self.inputSelector.setMRMLScene(slicer.mrmlScene)
-    self.inputSelector.setToolTip("Görüntüyü Seçin")
+    self.inputSelector.setToolTip("Select Input DWI Volume")
     formLayout.addRow("Input Image:", self.inputSelector)
 
-   
+    
     self.maskSelector = slicer.qMRMLNodeComboBox()
     self.maskSelector.nodeTypes = ["vtkMRMLLabelMapVolumeNode", "vtkMRMLSegmentationNode"]
     self.maskSelector.selectNodeUponCreation = True
@@ -122,10 +81,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.methodSelector.addItem("Mono-Exponential (ADC)", "adc")
     self.methodSelector.addItem("Bi-Exponential (Free)", "biexp")
     self.methodSelector.addItem("Tri-Exponential (Free)", "triexp")
-    try:
-        import ivimfit.bayesian
-        self.methodSelector.addItem("Bayesian (MCMC)", "bayesian")
-    except: pass
+    self.methodSelector.addItem("Bayesian (MCMC)", "bayesian")
     formLayout.addRow("Algorithm:", self.methodSelector)
 
     
@@ -175,7 +131,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     self.layout.addStretch(1)
 
-   
+    
     self.applyButton.connect('clicked(bool)', self.onApplyButton)
     self.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateButtonState)
     self.maskSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateButtonState)
@@ -219,7 +175,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         b_vals = [float(x.strip()) for x in self.bValsInput.text.split(',')]
         if len(b_vals) < 2: raise ValueError
     except:
-        slicer.util.errorDisplay("B-değerleri hatalı.")
+        slicer.util.errorDisplay("Invalid B-Values.")
         return
 
     maskNode = self.maskSelector.currentNode()
@@ -240,10 +196,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         results_package = self.logic.process(vol, maskNode, b_vals, method, split, use_scaling, self.progressBar)
         
-        
         self.displayResults(results_package['params'], method)
-        
-        
         self.plotResults(results_package)
         
         slicer.util.showStatusMessage("Analysis Complete!", 3000)
@@ -259,20 +212,19 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
   def displayResults(self, params, method):
     if method == "adc":
-        self.resultLabels['ADC'].setText(f"{params.get('D',0):.6f}mm^2/s")
+        self.resultLabels['ADC'].setText(f"{params.get('D',0):.6f} mm^2/s")
     elif method in ["segmented", "biexp", "bayesian"]:
         self.resultLabels['f'].setText(f"{params.get('f',0)*100:.2f} %")
-        self.resultLabels['D'].setText(f"{params.get('D',0):.6f}mm^2/s")
-        self.resultLabels['D_star'].setText(f"{params.get('Ds',0):.6f}mm^2/s")
+        self.resultLabels['D'].setText(f"{params.get('D',0):.6f} mm^2/s")
+        self.resultLabels['D_star'].setText(f"{params.get('Ds',0):.6f} mm^2/s")
     elif method == "triexp":
         self.resultLabels['f_fast'].setText(f"{params.get('f',0)*100:.2f} %")
         self.resultLabels['f_inter'].setText(f"{params.get('f2',0)*100:.2f} %")
-       
         f_slow = 1.0 - (params.get('f',0)+params.get('f2',0))
         self.resultLabels['f_slow'].setText(f"{f_slow*100:.2f} %")
-        self.resultLabels['D_slow_tri'].setText(f"{params.get('D',0):.6f}mm^2/s")
-        self.resultLabels['D_fast_tri'].setText(f"{params.get('Ds',0):.6f}mm^2/s")
-        self.resultLabels['D_inter_tri'].setText(f"{params.get('Ds2',0):.6f}mm^2/s")
+        self.resultLabels['D_slow_tri'].setText(f"{params.get('D',0):.6f} mm^2/s")
+        self.resultLabels['D_fast_tri'].setText(f"{params.get('Ds',0):.6f} mm^2/s")
+        self.resultLabels['D_inter_tri'].setText(f"{params.get('Ds2',0):.6f} mm^2/s")
 
   def plotResults(self, data):
     b_values = data['b']
@@ -282,7 +234,6 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     params = data['params']
     method = data['method']
     
-    
     if method in ["segmented", "biexp", "bayesian"]:
         legend_txt = f"Fit: f={params.get('f',0):.2f}, D={params.get('D',0):.6f}, D*={params.get('Ds',0):.6f}"
     elif method == "adc":
@@ -290,9 +241,8 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     elif method == "triexp":
         f1 = params.get('f', 0); f2 = params.get('f2', 0); f3 = 1.0 - (f1+f2)
         D = params.get('D', 0); Ds1 = params.get('Ds', 0); Ds2 = params.get('Ds2', 0)
-        legend_txt = f"Fit: f1={f1:.2f}, f2={f2:.2f}, f3={f3:.2f} | D={D:.6f}, D*1={Ds1:.6f}, D*2={Ds2:.6f}"
+        legend_txt = f"Fit: f1={f1:.2f}, f2={f2:.2f} | D={D:.6f}, D*1={Ds1:.6f}, D*2={Ds2:.6f}"
     else: legend_txt = "Model Fit"
-
     
     tableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLTableNode", "IVIM_ROI_Data")
     tableNode.RemoveAllColumns()
@@ -300,7 +250,6 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     arr_b = vtk.vtkDoubleArray(); arr_b.SetName("B-Value")
     arr_raw = vtk.vtkDoubleArray(); arr_raw.SetName("Measured Signal")
     arr_fit = vtk.vtkDoubleArray(); arr_fit.SetName("Fit Curve")
-    
     
     sorted_idx = np.argsort(b_values)
     for i in sorted_idx:
@@ -310,13 +259,11 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
     tableNode.AddColumn(arr_b); tableNode.AddColumn(arr_raw); tableNode.AddColumn(arr_fit)
     
-    
     chartNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotChartNode", "IVIM_Chart")
     chartNode.SetTitle(f"IVIM Curve (R²={r2:.4f})")
     chartNode.SetXAxisTitle("b-value (s/mm²)")
     chartNode.SetYAxisTitle("Normalized Signal (S/S0)")
     chartNode.SetLegendVisibility(True)
-    
     
     s1 = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", "Raw Data")
     s1.SetName("Measured Data")
@@ -326,10 +273,9 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     s1.SetPlotType(slicer.vtkMRMLPlotSeriesNode.PlotTypeScatter) 
     s1.SetLineStyle(slicer.vtkMRMLPlotSeriesNode.LineStyleDashDot) 
     s1.SetMarkerStyle(slicer.vtkMRMLPlotSeriesNode.MarkerStyleCross) 
-    s1.SetColor(0, 0, 0) # Siyah
+    s1.SetColor(0, 0, 0)
     s1.SetMarkerSize(8)
     chartNode.AddAndObservePlotSeriesNodeID(s1.GetID())
-    
     
     s2 = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLPlotSeriesNode", "Fit Data")
     s2.SetName(legend_txt) 
@@ -343,7 +289,6 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     s2.SetLineWidth(3)
     chartNode.AddAndObservePlotSeriesNodeID(s2.GetID())
     
-    
     lm = slicer.app.layoutManager()
     lm.setLayout(24) 
     pw = lm.plotWidget(0)
@@ -353,29 +298,54 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         pv.SetInteractionMode(slicer.vtkMRMLPlotViewNode.InteractionModePanView)
 
 
+# -----------------------------------------------------------------------------
+# IVIMFitSlicer Logic
+# -----------------------------------------------------------------------------
 class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
   
   def process(self, inputNode, maskNode, b_values, method, split_b, use_scaling, progressBar):
+    """
+    Main processing function. Dependencies are installed/imported here to avoid startup lag.
+    """
+    import time
     startTime = time.time()
     
+    
+    try:
+      import ivimfit
+    except ImportError:
+      slicer.util.showStatusMessage("Installing 'ivimfit' library...", 3000)
+      slicer.util.pip_install("ivimfit")
+      import ivimfit
+
+    
+    if method == "bayesian":
+        try:
+            import pymc
+        except ImportError:
+            slicer.util.pip_install("pymc")
+            import pymc
+            
+    
+    from ivimfit import adc, biexp, segmented, triexp
+    try: from ivimfit import bayesian
+    except: pass
     
     input_array, refNode = self.extract_pixel_data_safe(inputNode, len(b_values))
     Z, Y, X, B = input_array.shape
     
     if B != len(b_values):
         if B == len(b_values) + 1: b_values.insert(0, 0.0)
-        else: raise ValueError(f"Frame ({B}) != B-Values ({len(b_values)})")
+        else: raise ValueError(f"Frame count ({B}) does not match B-Values ({len(b_values)})")
 
-    
     mask_array = self.prepare_mask(maskNode, inputNode)
-    if mask_array.shape != (Z,Y,X): pass
     indices = np.where(mask_array > 0)
     n_pixels = len(indices[0])
     if n_pixels == 0: raise ValueError("Mask is empty!")
 
     slicer.app.processEvents()
 
-    
+   
     map_method = "segmented" if method == "bayesian" else method
     signals = input_array[indices]
     map_results = np.zeros((n_pixels, 5), dtype=np.float32)
@@ -393,6 +363,7 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
             map_scaled[:, 0] *= 100; map_scaled[:, 1] *= 100
             map_scaled[:, 2] *= 1e6; map_scaled[:, 3] *= 1e6; map_scaled[:, 4] *= 1e6
 
+    
     out_maps = {k: np.zeros((Z,Y,X), dtype=np.float32) for k in ['f','D','Ds','f2','Ds2', 'f_slow']}
     if map_method == "adc": out_maps['D'][indices] = map_scaled[:, 0]
     elif map_method in ["segmented", "biexp", "bayesian"]:
@@ -402,6 +373,7 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
         out_maps['D'][indices] = map_scaled[:, 2]; out_maps['Ds'][indices] = map_scaled[:, 3]; out_maps['Ds2'][indices] = map_scaled[:, 4]
         out_maps['f_slow'][indices] = np.clip(100.0 - (map_scaled[:, 0] + map_scaled[:, 1]), 0, 100)
 
+    
     bn = inputNode.GetName()
     final_D_node = self.save_volume(out_maps['D'], refNode, f"{bn}_{method}_D_Map")
     self.force_show_volume(final_D_node)
@@ -422,10 +394,6 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     roi_params = {}
     fit_curve = np.zeros_like(avg_signal_norm)
     
-    from ivimfit import adc, biexp, segmented, triexp
-    try: from ivimfit import bayesian
-    except: pass
-
     try:
         if method == "segmented":
             p = segmented.fit_biexp_segmented(b_vals_arr, avg_signal_norm, split_b=split_b)
@@ -500,9 +468,13 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     return v
 
   def run_fitting(self, b_vals, signals, method, split_b, results, progressBar):
+    
     from ivimfit import adc, biexp, segmented, triexp
+    from concurrent.futures import ThreadPoolExecutor
+    
     n_total = len(signals); chunk_size = 500; n_chunks = int(np.ceil(n_total / chunk_size))
     if progressBar: progressBar.setRange(0, n_chunks)
+    
     def worker(start_idx):
         end = min(start_idx + chunk_size, n_total); chunk = signals[start_idx:end]; res = np.zeros((len(chunk), 5), dtype=np.float32)
         for i, sig in enumerate(chunk):
@@ -513,9 +485,33 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
                 elif method == "triexp": r = triexp.fit_triexp_free(b_vals, sig); res[i] = r
             except: pass
         return start_idx, res
+        
     with ThreadPoolExecutor(max_workers=4) as ex:
         futures = [ex.submit(worker, i*chunk_size) for i in range(n_chunks)]
         for i, f in enumerate(futures):
             idx, r = f.result(); results[idx:idx+len(r)] = r
-
             if progressBar: progressBar.setValue(i+1); slicer.app.processEvents()
+
+# -----------------------------------------------------------------------------
+# Register Sample Data
+# -----------------------------------------------------------------------------
+def registerSampleData():
+  """
+  Add data sets to Sample Data module.
+  """
+  import SampleData
+  iconsPath = os.path.join(os.path.dirname(__file__), 'Resources/Icons')
+
+  
+  
+  SampleData.SampleDataLogic.registerCustomSampleDataSource(
+    category='IVIM',
+    sampleName='IVIMExampleTest',
+    thumbnailFileName=os.path.join(iconsPath, 'IVIMFitSlicer.png'),
+    
+    
+    uris='https://github.com/Atakanisik/SlicerIVIMFit/releases/download/v1.0.0-data/21.MR.ep2d_diff_b50_400_800_cor_p2.IVIMkurtozis.karaciger._TRACEW_DFC.-.10.frames.MultiVolume.by.AcquisitionTime.nrrd',
+    fileNames='IVIM_Sample.nrrd',
+    checksums='SHA256:e938fdcec93e690ef5c57702dd9e2f302e553a0d77da618d41e3107eaf0f74cf',
+    nodeNames='IVIM_Test_Volume'
+  )
