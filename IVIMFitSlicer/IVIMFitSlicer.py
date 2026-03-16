@@ -134,12 +134,14 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
     self.applyButton.connect('clicked(bool)', self.onApplyButton)
     self.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateButtonState)
+    self.inputSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.attemptBValueExtraction)
     self.maskSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateButtonState)
     self.methodSelector.connect("currentIndexChanged(int)", self.onMethodChanged)
     self.bValsInput.textChanged.connect(self.updateButtonState)
 
     self.onMethodChanged()
     self.updateButtonState()
+    self.attemptBValueExtraction(self.inputSelector.currentNode())
 
   def onMethodChanged(self):
     self.splitBFrame.visible = ("segmented" in self.methodSelector.currentData)
@@ -209,6 +211,57 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.applyButton.enabled = True
         self.progressBar.visible = False
         self.updateButtonState()
+        
+  def attemptBValueExtraction(self, node):
+    if not node:
+        return
+
+    # 1. MultiVolume Etiket Kontrolü
+    if node.IsA("vtkMRMLMultiVolumeNode"):
+        labels = node.GetAttribute("MultiVolume.FrameLabels")
+        if labels:
+            self.bValsInput.setText(labels)
+            slicer.util.showStatusMessage("B-değerleri MultiVolume etiketlerinden çekildi!", 3000)
+            return
+
+    # 2. DICOM Database üzerinden Tag Tarama (Siemens, GE, Standart)
+    try:
+        shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+        itemID = shNode.GetItemByDataNode(node)
+        if not itemID: return
+        
+        uidList = shNode.GetItemDataUIDs(itemID)
+        if not uidList: return
+        
+        db = slicer.dicomDatabase
+        if not db or not db.isOpen: return
+
+        b_vals = []
+        uids = [uidList.GetValue(i) for i in range(uidList.GetNumberOfValues())] if hasattr(uidList, 'GetValue') else uidList.split()
+        tags_to_check = ["0018,9087", "0019,100c", "0043,1039"]
+        
+        for uid in uids:
+            # DÜZELTME BURADA: UID'den fiziksel dosya yolunu alıyoruz
+            filepath = db.fileForInstance(uid)
+            if not filepath: continue
+            
+            for tag in tags_to_check:
+                val = db.fileValue(filepath, tag)
+                if val:
+                    try:
+                        clean_val = int(float(val.split('\\')[0].strip('b= B=')))
+                        b_vals.append(clean_val)
+                        break 
+                    except:
+                        pass
+                        
+        if b_vals:
+            unique_b = sorted(list(set(b_vals)))
+            self.bValsInput.setText(", ".join(map(str, unique_b)))
+            slicer.util.showStatusMessage("B-değerleri DICOM'dan çekildi!", 3000)
+            
+    except Exception as e:
+        print(f"B-değeri okuma hatası: {e}")
 
   def displayResults(self, params, method):
     if method == "adc":
@@ -289,8 +342,10 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     s2.SetLineWidth(3)
     chartNode.AddAndObservePlotSeriesNodeID(s2.GetID())
     
+    layoutId = slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpPlotView
     lm = slicer.app.layoutManager()
-    lm.setLayout(24) 
+    lm.setLayout(layoutId) 
+    
     pw = lm.plotWidget(0)
     if pw: 
         pv = pw.mrmlPlotViewNode()
@@ -338,7 +393,7 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
         if B == len(b_values) + 1: b_values.insert(0, 0.0)
         else: raise ValueError(f"Frame count ({B}) does not match B-Values ({len(b_values)})")
 
-    mask_array = self.prepare_mask(maskNode, inputNode)
+    mask_array = self.prepare_mask(maskNode, refNode)
     indices = np.where(mask_array > 0)
     n_pixels = len(indices[0])
     if n_pixels == 0: raise ValueError("Mask is empty!")
@@ -421,6 +476,8 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     ss_tot = np.sum((avg_signal_norm - np.mean(avg_signal_norm))**2)
     r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
 
+    if refNode != inputNode and refNode.GetName() == "Temp_Scalar_Ref":
+        slicer.mrmlScene.RemoveNode(refNode)
     return {
         'b': b_values, 'signal_avg': avg_signal_norm, 'signal_fit': fit_curve,
         'params': roi_params, 'r2': r2, 'method': method
@@ -431,27 +488,94 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     slicer.util.resetSliceViews()
 
   def extract_pixel_data_safe(self, node, expected_b):
-    if node.IsA("vtkMRMLSequenceNode"):
-        n = node.GetNumberOfDataNodes(); lst = []; ref = node.GetDataNodeAtValue(node.GetNthIndexValue(0))
-        for i in range(n): lst.append(slicer.util.arrayFromVolume(node.GetDataNodeAtValue(node.GetNthIndexValue(i))).copy())
-        return np.moveaxis(np.array(lst), 0, -1), ref
+    # 1. Sequence Proxy Volume Kontrolü ("[0]" isimli durum)
     try:
         bn = slicer.modules.sequences.logic().GetFirstBrowserNodeForProxyNode(node)
         if bn:
-            sn = bn.GetMasterSequenceNode(); n = sn.GetNumberOfDataNodes(); lst = []; ref = node; orig = bn.GetSelectedItemNumber()
-            for i in range(n): bn.SetSelectedItemNumber(i); slicer.app.processEvents(); lst.append(slicer.util.arrayFromVolume(node).copy())
-            bn.SetSelectedItemNumber(orig); return np.moveaxis(np.array(lst), 0, -1), ref
-    except: pass
-    arr = slicer.util.arrayFromVolume(node)
-    if arr.ndim == 4:
-        if arr.shape[0] == expected_b or arr.shape[0] == expected_b+1: return np.moveaxis(arr, 0, -1), node
-        if arr.shape[-1] == expected_b or arr.shape[-1] == expected_b+1: return arr, node
-    return arr, node
+            sn = bn.GetMasterSequenceNode()
+            n = sn.GetNumberOfDataNodes()
+            lst = []
+            ref = node
+            orig = bn.GetSelectedItemNumber()
+            for i in range(n):
+                bn.SetSelectedItemNumber(i)
+                slicer.app.processEvents()
+                lst.append(slicer.util.arrayFromVolume(node).copy())
+            bn.SetSelectedItemNumber(orig)
+            return np.moveaxis(np.array(lst), 0, -1), ref
+    except: 
+        pass
 
-  def prepare_mask(self, maskNode, inputNode):
+    # 2. Sequence Node Doğrudan Seçildiyse (Şu an aldığın hata durumu)
+    if node.IsA("vtkMRMLSequenceNode"):
+        n = node.GetNumberOfDataNodes()
+        lst = []
+        # Referans olarak sekansın içindeki ilk 3D volume'u (kareyi) alalım
+        ref = node.GetDataNodeAtValue(node.GetNthIndexValue(0))
+        for i in range(n):
+            data_node = node.GetDataNodeAtValue(node.GetNthIndexValue(i))
+            lst.append(slicer.util.arrayFromVolume(data_node).copy())
+        # Elde edilen diziyi (Z, Y, X, B) formatına getir
+        arr = np.moveaxis(np.array(lst), 0, -1)
+        return arr, ref
+
+    # 3. MultiVolume veya Standart Volume
+    # Artık 'node' kesinlikle bir Volume, bu yüzden arrayFromVolume kullanmak güvenli.
+    arr = slicer.util.arrayFromVolume(node)
+    
+    if node.IsA("vtkMRMLMultiVolumeNode"):
+        # MultiVolume için Labelmap modülüne uygun geçici bir 3D referans oluştur
+        ref = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "Temp_Scalar_Ref")
+        ref.CopyOrientation(node)
+        
+        # Array'den ilk kareyi çekip referansa atıyoruz ki IJK matrisi eşleşsin
+        if arr.ndim == 4:
+            frame_3d = arr[..., 0] if arr.shape[-1] <= arr.shape[0] else arr[0, ...]
+            slicer.util.updateVolumeFromArray(ref, frame_3d)
+        else:
+            slicer.util.updateVolumeFromArray(ref, arr)
+    else:
+        ref = node
+
+    # 4. Array eksenlerini her zaman (Z, Y, X, B) formatına zorla
+    if arr.ndim == 4:
+        if arr.shape[-1] == expected_b or arr.shape[-1] == expected_b + 1:
+            return arr, ref
+        elif arr.shape[0] == expected_b or arr.shape[0] == expected_b + 1:
+            return np.moveaxis(arr, 0, -1), ref
+
+    return arr, ref
+    
+    # 2. MultiVolume ise Labelmap modülü için geçici bir 3D referans oluştur
+    if node.IsA("vtkMRMLMultiVolumeNode") or node.IsA("vtkMRMLSequenceNode"):
+        ref = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "Temp_Scalar_Ref")
+        ref.CopyOrientation(node)
+        
+        # Array'den ilk kareyi 3D olarak çekip referansa atıyoruz ki IJK matrisi eşleşsin
+        if arr.ndim == 4:
+            frame_3d = arr[..., 0] if arr.shape[-1] <= arr.shape[0] else arr[0, ...]
+            slicer.util.updateVolumeFromArray(ref, frame_3d)
+        else:
+            slicer.util.updateVolumeFromArray(ref, arr)
+    else:
+        ref = node
+
+    # 3. Array'i her zaman (Z, Y, X, B) formatına zorla
+    if arr.ndim == 4:
+        # Eğer B boyutu zaten en sondayda, dokunma! (Multi-Volume durumu)
+        if arr.shape[-1] == expected_b or arr.shape[-1] == expected_b + 1:
+            return arr, ref
+        # Eğer B boyutu baştaysa (B, Z, Y, X), o zaman sona al.
+        elif arr.shape[0] == expected_b or arr.shape[0] == expected_b + 1:
+            return np.moveaxis(arr, 0, -1), ref
+
+    return arr, ref
+
+  def prepare_mask(self, maskNode, refNode):
     if maskNode.IsA("vtkMRMLSegmentationNode"):
         ln = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
-        slicer.modules.segmentations.logic().ExportVisibleSegmentsToLabelmapNode(maskNode, ln, inputNode)
+        # Artık MultiVolume değil, garanti 3D ScalarVolume (refNode) gönderiyoruz
+        slicer.modules.segmentations.logic().ExportVisibleSegmentsToLabelmapNode(maskNode, ln, refNode)
         arr = slicer.util.arrayFromVolume(ln); slicer.mrmlScene.RemoveNode(ln)
         return arr[0] if arr.ndim==4 else arr
     arr = slicer.util.arrayFromVolume(maskNode)
