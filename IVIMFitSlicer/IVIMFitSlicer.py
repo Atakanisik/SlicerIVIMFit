@@ -74,7 +74,11 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.bValuesLayout.addWidget(self.presetBtn)
     
     formLayout.addRow("B-Values:", self.bValuesLayout)
-
+# YENİ EKLENEN KISIM: Excluded B-Values Kutusu
+    self.excludeBValsInput = qt.QLineEdit()
+    self.excludeBValsInput.setPlaceholderText("Örn: 800, 1000 (Opsiyonel)")
+    self.excludeBValsInput.setToolTip("Analizden çıkarmak istediğiniz b-değerlerini virgülle ayırarak yazın.")
+    formLayout.addRow("Excluded B-Values:", self.excludeBValsInput)
     
     self.methodSelector = qt.QComboBox()
     self.methodSelector.addItem("Bi-Exponential (Segmented)", "segmented")
@@ -174,10 +178,14 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
   def onApplyButton(self):
     try:
-        b_vals = [float(x.strip()) for x in self.bValsInput.text.split(',')]
+        b_vals_str = self.bValsInput.text.strip()
+        b_vals = [float(x.strip()) for x in b_vals_str.split(',')] if b_vals_str else []
         if len(b_vals) < 2: raise ValueError
+        
+        exclude_str = self.excludeBValsInput.text.strip()
+        excluded_b_vals = [float(x.strip()) for x in exclude_str.split(',')] if exclude_str else []
     except:
-        slicer.util.errorDisplay("Invalid B-Values.")
+        slicer.util.errorDisplay("Geçersiz B-değeri formatı.")
         return
 
     maskNode = self.maskSelector.currentNode()
@@ -195,8 +203,8 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         split = self.splitBSpin.value
         use_scaling = self.scalingCheck.isChecked()
         
-        
-        results_package = self.logic.process(vol, maskNode, b_vals, method, split, use_scaling, self.progressBar)
+        # DÜZELTİLEN KISIM: excluded_b_vals parametresini fonksiyona gönderiyoruz
+        results_package = self.logic.process(vol, maskNode, b_vals, excluded_b_vals, method, split, use_scaling, self.progressBar)
         
         self.displayResults(results_package['params'], method)
         self.plotResults(results_package)
@@ -358,7 +366,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 # -----------------------------------------------------------------------------
 class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
   
-  def process(self, inputNode, maskNode, b_values, method, split_b, use_scaling, progressBar):
+  def process(self, inputNode, maskNode, b_values, excluded_b_values,method, split_b, use_scaling, progressBar):
     """
     Main processing function. Dependencies are installed/imported here to avoid startup lag.
     """
@@ -392,6 +400,21 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     if B != len(b_values):
         if B == len(b_values) + 1: b_values.insert(0, 0.0)
         else: raise ValueError(f"Frame count ({B}) does not match B-Values ({len(b_values)})")
+
+    if excluded_b_values:
+        indices_to_keep = []
+        for i, b in enumerate(b_values):
+            # Matematiksel hassasiyet hatasını önlemek için toleranslı kontrol
+            if not any(abs(b - ex_b) < 1e-5 for ex_b in excluded_b_values):
+                indices_to_keep.append(i)
+        
+        if len(indices_to_keep) < 2:
+            raise ValueError("Hariç tutma işleminden sonra analiz için en az 2 adet B-değeri kalmalıdır.")
+            
+        # Hem listeyi hem de Numpy matrisini güncelle (Z, Y, X, B) formatında sadece istenenleri alıyoruz
+        b_values = [b_values[i] for i in indices_to_keep]
+        input_array = input_array[:, :, :, indices_to_keep]
+        B = len(b_values)
 
     mask_array = self.prepare_mask(maskNode, refNode)
     indices = np.where(mask_array > 0)
