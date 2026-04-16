@@ -52,6 +52,47 @@ It integrates the power of the `ivimfit` Python library directly into the clinic
 
 ---
 
+---
+
+## ⚡ Advanced Setup for MCMC (Bayesian Quality Mode)
+*Optional: Only required for the "Bayesian (Quality - 10000d/3c)" algorithm.*
+
+The **Bayesian Quality** mode performs extensive Markov Chain Monte Carlo (MCMC) sampling (10,000 draws, 3 chains) to provide highly accurate parameter estimations and Gelman-Rubin (R-hat) convergence statistics. 
+
+**The Computational Bottleneck:**
+Computing massive MCMC chains in pure Python can take hours or even a full day. To achieve high performance, the underlying `PyMC`/`PyTensor` engine attempts to compile the mathematical models into C++ code. However, 3D Slicer's embedded Python environment is stripped down to save space and lacks the necessary C++ headers (`include`) and linking libraries (`libs`).
+
+**The Solution (C++ Acceleration):**
+If you want to run the Quality mode in minutes rather than days, you must manually link a standard Python environment to your 3D Slicer installation to enable C++ compilation. If you skip this setup, the module will fallback to pure Python (expect extremely long computation times).
+
+### Prerequisites (Windows)
+1. A C++ Compiler (e.g., `g++` via MSYS2/MinGW) added to your system PATH.
+2. A standard local Python installation that matches Slicer's Python version (e.g., Python 3.9 or 3.12).
+
+### Step-by-Step Linking Guide
+1. **Locate Slicer's Python Directory:**
+   Navigate to your Slicer installation path, typically:
+   `C:\Users\<YourUsername>\AppData\Local\slicer.org\3D Slicer <Version>\lib\Python`
+2. **Fix the Linking Libraries (`libs`):**
+   * Inside Slicer's Python folder, create a new empty folder named `libs`.
+   * Go to your system's standard Python installation folder (e.g., `C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312\libs`).
+   * Copy the library file (e.g., `python3.lib` and/or `python312.lib`) and paste it into the new `libs` folder inside Slicer.
+3. **Fix the Headers (`include`):**
+   * Go to your system's standard Python folder and copy the entire `include` folder (which contains `Python.h`).
+   * Paste it directly into Slicer's Python directory (next to the `libs` folder you just created).
+4. **Restart 3D Slicer:**
+   Run the Bayesian Quality mode. The system will now detect `g++` and the header files, compiling the model in seconds and unlocking maximum hardware performance.
+
+---
+
+**Strategic Design Choice regarding Parametric Mapping:**
+Computing Markov Chain Monte Carlo (MCMC) simulations on a voxel-by-voxel basis for 3D parametric mapping is computationally prohibitive (potentially taking days for a single volume). 
+
+To maximize workflow efficiency without sacrificing statistical rigor, **IVIMfitSlicer** employs a hybrid approach:
+ * **3D Parametric Maps** are generated rapidly using the robust **Segmented algorithm** for **Bayesian** selections, providing immediate visual feedback and spatial distribution context.
+ * **ROI-Averaged Statistics**, which are critical for scientific conclusions, are computed using the selected **Bayesian Inference** model to provide the highest parameter precision and R-hat convergence values.
+
+---
 ## 🚀 Usage Workflow
 
 ### 1. Load Data
@@ -132,6 +173,7 @@ You can find Sample Data on Slicer's Sample Data Module
 If you use this software in your research, please cite the associated repository or publication[10.36948/ijfmr.2025.v07i05.56036](https://doi.org/10.36948/ijfmr.2025.v07i05.56036).
 
 ---
+
 
 *Developed for the Slicer Community.*
 

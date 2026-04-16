@@ -289,7 +289,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   def displayResults(self, params, method):
     if method == "adc":
         self.resultLabels['ADC'].setText(f"{params.get('D',0):.6f} mm^2/s")
-    elif method in ["segmented", "biexp", "bayesian"]:
+    elif method in ["segmented", "biexp","bayesian_fast","bayesian_quality"]:
         self.resultLabels['f'].setText(f"{params.get('f',0)*100:.2f} %")
         self.resultLabels['D'].setText(f"{params.get('D',0):.6f} mm^2/s")
         self.resultLabels['D_star'].setText(f"{params.get('Ds',0):.6f} mm^2/s")
@@ -448,7 +448,8 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     slicer.app.processEvents()
 
    
-    map_method = "segmented" if method == "bayesian" else method
+    map_method = "segmented" if "bayesian" in method else method
+    
     signals = input_array[indices]
     map_results = np.zeros((n_pixels, 5), dtype=np.float32)
     b_vals_arr = np.array(b_values, dtype=np.float64)
@@ -459,7 +460,7 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     map_scaled = map_results.copy()
     if use_scaling:
         if map_method == "adc": map_scaled[:, 0] *= 1e6
-        elif map_method in ["segmented", "biexp", "bayesian"]:
+        elif map_method in ["segmented", "biexp", "bayesian_fast","bayesian_quality"]:
             map_scaled[:, 0] *= 100; map_scaled[:, 1] *= 1e6; map_scaled[:, 2] *= 1e6
         elif map_method == "triexp":
             map_scaled[:, 0] *= 100; map_scaled[:, 1] *= 100
@@ -468,7 +469,7 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     
     out_maps = {k: np.zeros((Z,Y,X), dtype=np.float32) for k in ['f','D','Ds','f2','Ds2', 'f_slow']}
     if map_method == "adc": out_maps['D'][indices] = map_scaled[:, 0]
-    elif map_method in ["segmented", "biexp", "bayesian"]:
+    elif map_method in ["segmented", "bayesian_fast","bayesian_quality"]:
         out_maps['f'][indices] = map_scaled[:, 0]; out_maps['D'][indices] = map_scaled[:, 1]; out_maps['Ds'][indices] = map_scaled[:, 2]
     elif map_method == "triexp":
         out_maps['f'][indices] = map_scaled[:, 0]; out_maps['f2'][indices] = map_scaled[:, 1]
