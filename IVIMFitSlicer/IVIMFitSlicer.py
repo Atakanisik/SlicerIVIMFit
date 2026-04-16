@@ -85,7 +85,8 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.methodSelector.addItem("Mono-Exponential (ADC)", "adc")
     self.methodSelector.addItem("Bi-Exponential (Free)", "biexp")
     self.methodSelector.addItem("Tri-Exponential (Free)", "triexp")
-    self.methodSelector.addItem("Bayesian (MCMC)", "bayesian")
+    self.methodSelector.addItem("Bayesian (Fast - 2000d/1c)", "bayesian_fast")
+    self.methodSelector.addItem("Bayesian (Quality - 10000d/3c)", "bayesian_quality")
     formLayout.addRow("Algorithm:", self.methodSelector)
 
     
@@ -159,7 +160,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
     to_show = []
     if method == "adc": to_show = ["ADC"]
-    elif method in ["segmented", "biexp", "bayesian"]: to_show = ["f", "D", "D_star"]
+    elif method in ["segmented", "biexp", "bayesian_fast", "bayesian_quality"]: to_show = ["f", "D", "D_star"]
     elif method == "triexp": to_show = ["f_fast", "f_inter", "f_slow", "D_slow_tri", "D_inter_tri", "D_fast_tri"]
         
     for p in to_show:
@@ -198,8 +199,22 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     slicer.app.processEvents()
 
     try:
+        import shutil # g++ kontrolü için gerekli kütüphane
+        
         vol = self.inputSelector.currentNode()
         method = self.methodSelector.currentData
+        
+        # YENİ: g++ Kontrolü
+        if method == "bayesian_quality" and shutil.which("g++") is None:
+            ret = slicer.util.confirmOkCancelDisplay(
+                "Sistemde 'g++' derleyicisi bulunamadı!\n\nBayesian Quality modu (çoklu zincir) C++ derleyicisi olmadan çok uzun sürebilir veya kilitlenebilir.\n\nYine de devam etmek istiyor musunuz?",
+                title="Derleyici (g++) Uyarısı"
+            )
+            if not ret:
+                self.applyButton.enabled = True
+                self.progressBar.visible = False
+                return # Kullanıcı iptal etti, işlemi durdur
+                
         split = self.splitBSpin.value
         use_scaling = self.scalingCheck.isChecked()
         
@@ -295,7 +310,10 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     params = data['params']
     method = data['method']
     
-    if method in ["segmented", "biexp", "bayesian"]:
+    if method == "bayesian_quality":
+        r_val = params.get('r_hat', 'N/A')
+        legend_txt = f"Fit: f={params.get('f',0):.2f}, D={params.get('D',0):.6f}, D*={params.get('Ds',0):.6f} | R-hat: {r_val}"
+    elif method in ["segmented", "biexp", "bayesian_fast"]:
         legend_txt = f"Fit: f={params.get('f',0):.2f}, D={params.get('D',0):.6f}, D*={params.get('Ds',0):.6f}"
     elif method == "adc":
         legend_txt = f"Fit: ADC={params.get('D',0):.6f}"
@@ -375,11 +393,17 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     
     
     try:
-      import ivimfit
-    except ImportError:
-      slicer.util.showStatusMessage("Installing 'ivimfit' library...", 3000)
-      slicer.util.pip_install("ivimfit")
-      import ivimfit
+        import importlib.metadata
+        import ivimfit
+        if importlib.metadata.version("ivimfit") < "0.1.6":
+            raise ImportError("Outdated version")
+    except (ImportError, Exception):
+        slicer.util.showStatusMessage("Updating 'ivimfit' to >=0.1.6...", 3000)
+        slicer.util.pip_install("ivimfit>=0.1.6 --upgrade")
+        import ivimfit
+        # Sürüm güncellendiyse modülü yeniden yükleyerek tazeleyelim
+        import importlib
+        importlib.reload(ivimfit)
 
     
     if method == "bayesian":
@@ -489,9 +513,14 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
             p = triexp.fit_triexp_free(b_vals_arr, avg_signal_norm)
             roi_params = {'f': p[0], 'f2': p[1], 'D': p[2], 'Ds': p[3], 'Ds2': p[4]}
             fit_curve = triexp.triexp_model(b_vals_arr, p[0], p[1], p[2], p[3], p[4])
-        elif method == "bayesian" and 'bayesian' in locals():
-            p = bayesian.fit_bayesian(b_vals_arr, avg_signal_norm, draws=2000, chains=1, progressbar=False)
-            roi_params = {'f': p[0], 'D': p[1], 'Ds': p[2]}
+        elif method == "bayesian_fast" and 'bayesian' in locals():
+            p = bayesian.fit_bayesian(b_vals_arr, avg_signal_norm, draws=2000, chains=1, cores=1, progressbar=False)
+            roi_params = {'f': p[0], 'D': p[1], 'Ds': p[2], 'r_hat': p[3]}
+            fit_curve = biexp.biexp_model(b_vals_arr, p[0], p[1], p[2])
+            
+        elif method == "bayesian_quality" and 'bayesian' in locals():
+            p = bayesian.fit_bayesian(b_vals_arr, avg_signal_norm, draws=10000, chains=3, cores=1, progressbar=False)
+            roi_params = {'f': p[0], 'D': p[1], 'Ds': p[2], 'r_hat': p[3]}
             fit_curve = biexp.biexp_model(b_vals_arr, p[0], p[1], p[2])
     except: pass
 
