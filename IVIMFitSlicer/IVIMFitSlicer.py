@@ -48,7 +48,7 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     
     self.inputSelector = slicer.qMRMLNodeComboBox()
-    self.inputSelector.nodeTypes = ["vtkMRMLScalarVolumeNode", "vtkMRMLDiffusionWeightedVolumeNode", "vtkMRMLMultiVolumeNode", "vtkMRMLSequenceNode"]
+    self.inputSelector.nodeTypes = ["vtkMRMLScalarVolumeNode", "vtkMRMLDiffusionWeightedVolumeNode", "vtkMRMLMultiVolumeNode"]
     self.inputSelector.selectNodeUponCreation = True
     self.inputSelector.setMRMLScene(slicer.mrmlScene)
     self.inputSelector.setToolTip("Select Input DWI Volume")
@@ -239,52 +239,95 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     if not node:
         return
 
-    # 1. MultiVolume Etiket Kontrolü
+    # 1. MultiVolume Etiket Kontrolü (Zaten kusursuz çalışıyor)
     if node.IsA("vtkMRMLMultiVolumeNode"):
         labels = node.GetAttribute("MultiVolume.FrameLabels")
         if labels:
             self.bValsInput.setText(labels)
-            slicer.util.showStatusMessage("B-değerleri MultiVolume etiketlerinden çekildi!", 3000)
+            slicer.util.showStatusMessage("B-değerleri MultiVolume'dan çekildi!", 3000)
             return
 
-    # 2. DICOM Database üzerinden Tag Tarama (Siemens, GE, Standart)
-    try:
-        shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
-        itemID = shNode.GetItemByDataNode(node)
-        if not itemID: return
-        
-        uidList = shNode.GetItemDataUIDs(itemID)
-        if not uidList: return
-        
-        db = slicer.dicomDatabase
-        if not db or not db.isOpen: return
+    # 2. Sequence (Depo) veya Proxy (Vitrin) node'unu bulma
+    sequenceNode = None
+    if node.IsA("vtkMRMLSequenceNode"):
+        sequenceNode = node
+    else:
+        try:
+            browserNode = slicer.modules.sequences.logic().GetFirstBrowserNodeForProxyNode(node)
+            if browserNode:
+                sequenceNode = browserNode.GetMasterSequenceNode()
+        except:
+            pass
 
-        b_vals = []
-        uids = [uidList.GetValue(i) for i in range(uidList.GetNumberOfValues())] if hasattr(uidList, 'GetValue') else uidList.split()
-        tags_to_check = ["0018,9087", "0019,100c", "0043,1039"]
-        
-        for uid in uids:
-            # DÜZELTME BURADA: UID'den fiziksel dosya yolunu alıyoruz
-            filepath = db.fileForInstance(uid)
-            if not filepath: continue
-            
-            for tag in tags_to_check:
-                val = db.fileValue(filepath, tag)
-                if val:
-                    try:
-                        clean_val = int(float(val.split('\\')[0].strip('b= B=')))
-                        b_vals.append(clean_val)
-                        break 
-                    except:
-                        pass
-                        
-        if b_vals:
-            unique_b = sorted(list(set(b_vals)))
+    # 3. DOĞRUDAN ATTRIBUTE (MÜHÜR) TARAMASI
+    db = slicer.dicomDatabase
+    if not db or not db.isOpen:
+        return
+
+    b_vals = []
+    tags_to_check = ["0018,9087", "0019,100c", "0043,1039"]
+
+    # Eğer Sequence (Sekans) bulduysak, içindeki her bir kareyi tek tek incele
+    if sequenceNode:
+        n_frames = sequenceNode.GetNumberOfDataNodes()
+        for i in range(n_frames):
+            dataNode = sequenceNode.GetNthDataNode(i)
+            if not dataNode: continue
+
+            # Slicer'ın Node'un alnına bastığı UID mührünü oku!
+            uids_attr = dataNode.GetAttribute("DICOM.instanceUIDs")
+            if not uids_attr:
+                continue
+
+            # Mühürleri (UID'leri) al ve DICOM veritabanında ara
+            uids = uids_attr.split()
+            for uid in uids:
+                filepath = db.fileForInstance(uid)
+                if not filepath: continue
+
+                # Dosyayı bulduk, B-değeri taglerini kontrol et
+                found_for_this_frame = False
+                for tag in tags_to_check:
+                    val = db.fileValue(filepath, tag)
+                    if val:
+                        try:
+                            clean_val = int(float(val.split('\\')[0].strip('b= B=')))
+                            b_vals.append(clean_val)
+                            found_for_this_frame = True
+                            break # Bu kare için b-değerini bulduk, diğer tag'e bakma
+                        except:
+                            pass
+                
+                if found_for_this_frame:
+                    break # Bu kare tamam, bir sonraki kareye (frame) geç
+
+    # 4. Standart Volume Seçildiyse (Yedek SH Taraması)
+    if not b_vals and not sequenceNode:
+        try:
+            shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+            itemID = shNode.GetItemByDataNode(node)
+            if itemID:
+                uidList = shNode.GetItemDataUIDs(itemID)
+                if uidList:
+                    uids = [uidList.GetValue(i) for i in range(uidList.GetNumberOfValues())] if hasattr(uidList, 'GetValue') else uidList.split()
+                    for uid in uids:
+                        filepath = db.fileForInstance(uid)
+                        if not filepath: continue
+                        for tag in tags_to_check:
+                            val = db.fileValue(filepath, tag)
+                            if val:
+                                try:
+                                    b_vals.append(int(float(val.split('\\')[0].strip('b= B='))))
+                                    break
+                                except: pass
+        except: pass
+
+    # 5. Sonuçları Ekrana Bas
+    if b_vals:
+        unique_b = sorted(list(set(b_vals)))
+        if len(unique_b) > 1: # En az 2 farklı b-değeri (örn: b=0 ve b=50) bulduysak geçerlidir
             self.bValsInput.setText(", ".join(map(str, unique_b)))
-            slicer.util.showStatusMessage("B-değerleri DICOM'dan çekildi!", 3000)
-            
-    except Exception as e:
-        print(f"B-değeri okuma hatası: {e}")
+            slicer.util.showStatusMessage(f"Başarılı: {len(unique_b)} adet B-değeri DICOM sekansından çekildi!", 3000)
 
   def displayResults(self, params, method):
     if method == "adc":
@@ -541,39 +584,41 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     slicer.util.resetSliceViews()
 
   def extract_pixel_data_safe(self, node, expected_b):
-    # 1. Sequence Proxy Volume Kontrolü ("[0]" isimli durum)
+# 1. Sequence Proxy Volume Kontrolü ("[0]" isimli durum)
     try:
         bn = slicer.modules.sequences.logic().GetFirstBrowserNodeForProxyNode(node)
         if bn:
             sn = bn.GetMasterSequenceNode()
             n = sn.GetNumberOfDataNodes()
             lst = []
-            ref = node
+            ref = node # [0] dosyası, maskeleme için mükemmel bir 3D referanstır
             orig = bn.GetSelectedItemNumber()
             for i in range(n):
                 bn.SetSelectedItemNumber(i)
                 slicer.app.processEvents()
                 lst.append(slicer.util.arrayFromVolume(node).copy())
-            bn.SetSelectedItemNumber(orig)
-            return np.moveaxis(np.array(lst), 0, -1), ref
+            bn.SetSelectedItemNumber(orig) # Orijinal haline geri döndür
+            
+            # (B, Z, Y, X) formatını (Z, Y, X, B) formatına zorla
+            arr = np.array(lst)
+            if arr.ndim == 4:
+                return np.moveaxis(arr, 0, -1), ref
     except: 
         pass
 
-    # 2. Sequence Node Doğrudan Seçildiyse (Şu an aldığın hata durumu)
+    # 2. Sequence Node Doğrudan Seçildiyse (Arayüzden kaldırdık ama yedek güvenlik)
     if node.IsA("vtkMRMLSequenceNode"):
         n = node.GetNumberOfDataNodes()
         lst = []
-        # Referans olarak sekansın içindeki ilk 3D volume'u (kareyi) alalım
         ref = node.GetDataNodeAtValue(node.GetNthIndexValue(0))
         for i in range(n):
             data_node = node.GetDataNodeAtValue(node.GetNthIndexValue(i))
             lst.append(slicer.util.arrayFromVolume(data_node).copy())
-        # Elde edilen diziyi (Z, Y, X, B) formatına getir
-        arr = np.moveaxis(np.array(lst), 0, -1)
-        return arr, ref
+        arr = np.array(lst)
+        if arr.ndim == 4:
+            return np.moveaxis(arr, 0, -1), ref
 
-    # 3. MultiVolume veya Standart Volume
-    # Artık 'node' kesinlikle bir Volume, bu yüzden arrayFromVolume kullanmak güvenli.
+    # 3. MultiVolume veya Standart 4D Volume (KUSURSUZ ÇALIŞAN KISMIN)
     arr = slicer.util.arrayFromVolume(node)
     
     if node.IsA("vtkMRMLMultiVolumeNode"):
