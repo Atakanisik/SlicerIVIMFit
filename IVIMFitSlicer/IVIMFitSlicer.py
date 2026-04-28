@@ -94,7 +94,11 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.scalingCheck.setChecked(True)
     formLayout.addRow("Visualization:", self.scalingCheck)
 
-    
+    self.generateMapsCheck = qt.QCheckBox("Generate Parameter Maps")
+    self.generateMapsCheck.setChecked(True) # Varsayılan olarak açık
+    self.generateMapsCheck.setToolTip("İşaretlenirse tüm hacim için harita oluşturur. İşaretlenmezse sadece ROI istatistiklerini hesaplar.")
+    formLayout.addRow("Computation:", self.generateMapsCheck)
+
     self.splitBFrame = qt.QWidget()
     splitLayout = qt.QHBoxLayout(self.splitBFrame)
     splitLayout.setContentsMargins(0,0,0,0)
@@ -106,7 +110,53 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     splitLayout.addWidget(self.splitBSpin)
     formLayout.addRow(self.splitBFrame)
 
-    
+    self.paramsCollapsibleButton = ctk.ctkCollapsibleButton()
+    self.paramsCollapsibleButton.text = "Fitting Parameters (Bounds & Initial)"
+    self.paramsCollapsibleButton.collapsed = True
+    formLayout.addRow(self.paramsCollapsibleButton)
+    self.paramsLayout = qt.QFormLayout(self.paramsCollapsibleButton)
+
+    self.param_definitions = {
+        "ADC": [0.001, 0.0, 0.03],      
+        "D": [0.001, 0.0001, 0.005],    
+        "Ds": [0.01, 0.005, 0.05],      
+        "f": [0.2, 0.0, 0.5],           
+        "D_slow_tri": [0.001, 0.0001, 0.003],
+        "D_inter_tri": [0.01, 0.003, 0.015],
+        "D_fast_tri": [0.1, 0.015, 0.15],
+        "f_inter": [0.3, 0.0, 0.5],
+        "f_fast": [0.2, 0.0, 0.5]
+    }
+
+    self.param_widgets = {}
+    for p, defaults in self.param_definitions.items():
+        row_widget = qt.QWidget()
+        row_layout = qt.QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0,0,0,0)
+        
+        init_edit = qt.QLineEdit(str(defaults[0]))
+        low_edit = qt.QLineEdit(str(defaults[1]))
+        high_edit = qt.QLineEdit(str(defaults[2]))
+        
+        init_edit.setToolTip("Initial Value (p0)")
+        low_edit.setToolTip("Lower Bound (Min)")
+        high_edit.setToolTip("Upper Bound (Max)")
+        
+        row_layout.addWidget(qt.QLabel("Init:"))
+        row_layout.addWidget(init_edit)
+        row_layout.addWidget(qt.QLabel("Min:"))
+        row_layout.addWidget(low_edit)
+        row_layout.addWidget(qt.QLabel("Max:"))
+        row_layout.addWidget(high_edit)
+        
+        label = qt.QLabel(f"{p}:")
+        self.paramsLayout.addRow(label, row_widget)
+        
+        self.param_widgets[p] = {
+            'label': label, 'row': row_widget, 
+            'init': init_edit, 'low': low_edit, 'high': high_edit
+        }
+
     self.applyButton = qt.QPushButton("🚀 Run Analysis & Plot")
     self.applyButton.enabled = False 
     self.applyButton.setStyleSheet("font-weight: bold; height: 45px; background-color: #0050aa; color: white; font-size: 14px;")
@@ -149,8 +199,26 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.attemptBValueExtraction(self.inputSelector.currentNode())
 
   def onMethodChanged(self):
-    self.splitBFrame.visible = ("segmented" in self.methodSelector.currentData)
-    self.updateResultVisibility(self.methodSelector.currentData)
+    method = self.methodSelector.currentData
+    self.splitBFrame.visible = ("segmented" in method)
+    self.updateResultVisibility(method)
+    
+    # --- YENİ: Parametre Kutularını Gizle/Göster ---
+    for p in self.param_widgets:
+        self.param_widgets[p]['label'].visible = False
+        self.param_widgets[p]['row'].visible = False
+
+    to_show = []
+    if method == "adc": 
+        to_show = ["ADC"]
+    elif method in ["segmented", "biexp", "bayesian_fast", "bayesian_quality"]: 
+        to_show = ["D", "Ds", "f"]
+    elif method == "triexp": 
+        to_show = ["D_slow_tri", "D_inter_tri", "D_fast_tri", "f_inter", "f_fast"]
+
+    for p in to_show:
+        self.param_widgets[p]['label'].visible = True
+        self.param_widgets[p]['row'].visible = True
 
   def updateResultVisibility(self, method):
     for p, lbl in self.resultLabels.items():
@@ -216,10 +284,26 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 return # Kullanıcı iptal etti, işlemi durdur
                 
         split = self.splitBSpin.value
-        use_scaling = self.scalingCheck.isChecked()
         
-        # DÜZELTİLEN KISIM: excluded_b_vals parametresini fonksiyona gönderiyoruz
-        results_package = self.logic.process(vol, maskNode, b_vals, excluded_b_vals, method, split, use_scaling, self.progressBar)
+        use_scaling = self.scalingCheck.isChecked()
+        generate_maps = self.generateMapsCheck.isChecked() 
+
+        # --- YENİ EKLENEN KISIM: Arayüzden Parametreleri Topla ---
+        custom_bounds = {}
+        for p, widgets in self.param_widgets.items():
+            if widgets['row'].visible:
+                custom_bounds[p] = {
+                    'init': float(widgets['init'].text),
+                    'low': float(widgets['low'].text),
+                    'high': float(widgets['high'].text)
+                }
+
+        # Mantık sınıfına (Logic) gönderiyoruz (custom_bounds eklendi!)
+        results_package = self.logic.process(
+            vol, maskNode, b_vals, excluded_b_vals, 
+            method, split, use_scaling, generate_maps, custom_bounds, self.progressBar
+        )
+        
         
         self.displayResults(results_package['params'], method)
         self.plotResults(results_package)
@@ -427,10 +511,15 @@ class IVIMFitSlicerWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 # -----------------------------------------------------------------------------
 class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
   
-  def process(self, inputNode, maskNode, b_values, excluded_b_values,method, split_b, use_scaling, progressBar):
+  def process(self, inputNode, maskNode, b_values, excluded_b_values,method, split_b, use_scaling,generate_maps,custom_bounds, progressBar):
     """
     Main processing function. Dependencies are installed/imported here to avoid startup lag.
     """
+    
+    # SİSTEMDE G++ OLSA BİLE PYTENSOR'UN DERLEME YAPMASINI ENGELLER:
+    
+    
+    
     import time
     startTime = time.time()
     
@@ -438,18 +527,29 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     try:
         import importlib.metadata
         import ivimfit
-        if importlib.metadata.version("ivimfit") < "0.1.6":
+        if importlib.metadata.version("ivimfit") < "0.1.7.2":
             raise ImportError("Outdated version")
     except (ImportError, Exception):
-        slicer.util.showStatusMessage("Updating 'ivimfit' to >=0.1.6...", 3000)
-        slicer.util.pip_install("ivimfit>=0.1.6 --upgrade")
+        slicer.util.showStatusMessage("Updating 'ivimfit' to >=0.1.7.2...", 3000)
+        slicer.util.pip_install("ivimfit>=0.1.7.2 --upgrade")
         import ivimfit
         # Sürüm güncellendiyse modülü yeniden yükleyerek tazeleyelim
         import importlib
         importlib.reload(ivimfit)
 
     
-    if method == "bayesian":
+    if "bayesian" in method:
+        # --- PYTENSOR WINDOWS SLICER YAMASI ---
+        import sys, os
+        libs_path = os.path.join(sys.exec_prefix, "libs")
+        if not os.path.exists(libs_path):
+            try:
+                os.makedirs(libs_path)
+                import logging
+                logging.info(f"PyTensor icin eksik libs klasoru olusturuldu: {libs_path}")
+            except: pass
+        # --------------------------------------
+        
         try:
             import pymc
         except ImportError:
@@ -493,80 +593,114 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
    
     map_method = "segmented" if "bayesian" in method else method
     
-    signals = input_array[indices]
-    map_results = np.zeros((n_pixels, 5), dtype=np.float32)
-    b_vals_arr = np.array(b_values, dtype=np.float64)
+    # --- HARİTA HESAPLAMA VE KAYDETME BLOĞU (IF KONTROLLÜ) ---
+    if generate_maps:
+        map_method = "segmented" if "bayesian" in method else method
+        signals = input_array[indices].astype(np.float32)
     
-    self.run_fitting(b_vals_arr, signals, map_method, split_b, map_results, progressBar)
+    # PİKSEL BAZLI NORMALİZASYON: Her pikseli kendi b=0 değerine bölüyoruz
+        s0_values = signals[:, 0][:, np.newaxis]
+    # S0'ın 0 olduğu durumlarda hata almamak için "where" maskesi kullanıyoruz
+        signals_norm = np.divide(signals, s0_values, out=np.zeros_like(signals), where=s0_values!=0)
+    
+        map_results = np.zeros((n_pixels, 5), dtype=np.float32)
+        b_vals_arr = np.array(b_values, dtype=np.float64)
+    
+    # Normalize edilmiş sinyalleri gönderiyoruz
+        self.run_fitting(b_vals_arr, signals_norm, map_method, split_b, map_results, custom_bounds, progressBar)
+        # Harita Ölçekleme (Scaling)
+        map_scaled = map_results.copy()
+        if use_scaling:
+            if map_method == "adc": map_scaled[:, 0] *= 1e6
+            elif map_method in ["segmented", "biexp", "bayesian_fast","bayesian_quality"]:
+                map_scaled[:, 0] *= 100; map_scaled[:, 1] *= 1e6; map_scaled[:, 2] *= 1e6
+            elif map_method == "triexp":
+                map_scaled[:, 0] *= 100; map_scaled[:, 1] *= 100
+                map_scaled[:, 2] *= 1e6; map_scaled[:, 3] *= 1e6; map_scaled[:, 4] *= 1e6
 
-    
-    map_scaled = map_results.copy()
-    if use_scaling:
-        if map_method == "adc": map_scaled[:, 0] *= 1e6
-        elif map_method in ["segmented", "biexp", "bayesian_fast","bayesian_quality"]:
-            map_scaled[:, 0] *= 100; map_scaled[:, 1] *= 1e6; map_scaled[:, 2] *= 1e6
+        # Haritaları Slicer'da oluştur ve kaydet
+        out_maps = {k: np.zeros((Z,Y,X), dtype=np.float32) for k in ['f','D','Ds','f2','Ds2', 'f_slow']}
+        if map_method == "adc": out_maps['D'][indices] = map_scaled[:, 0]
+        elif map_method in ["segmented", "bayesian_fast","bayesian_quality","biexp"]:
+            out_maps['f'][indices] = map_scaled[:, 0]; out_maps['D'][indices] = map_scaled[:, 1]; out_maps['Ds'][indices] = map_scaled[:, 2]
         elif map_method == "triexp":
-            map_scaled[:, 0] *= 100; map_scaled[:, 1] *= 100
-            map_scaled[:, 2] *= 1e6; map_scaled[:, 3] *= 1e6; map_scaled[:, 4] *= 1e6
+            out_maps['f'][indices] = map_scaled[:, 0]; out_maps['f2'][indices] = map_scaled[:, 1]
+            out_maps['D'][indices] = map_scaled[:, 2]; out_maps['Ds'][indices] = map_scaled[:, 3]; out_maps['Ds2'][indices] = map_scaled[:, 4]
+            out_maps['f_slow'][indices] = np.clip(100.0 - (map_scaled[:, 0] + map_scaled[:, 1]), 0, 100)
 
-    
-    out_maps = {k: np.zeros((Z,Y,X), dtype=np.float32) for k in ['f','D','Ds','f2','Ds2', 'f_slow']}
-    if map_method == "adc": out_maps['D'][indices] = map_scaled[:, 0]
-    elif map_method in ["segmented", "bayesian_fast","bayesian_quality"]:
-        out_maps['f'][indices] = map_scaled[:, 0]; out_maps['D'][indices] = map_scaled[:, 1]; out_maps['Ds'][indices] = map_scaled[:, 2]
-    elif map_method == "triexp":
-        out_maps['f'][indices] = map_scaled[:, 0]; out_maps['f2'][indices] = map_scaled[:, 1]
-        out_maps['D'][indices] = map_scaled[:, 2]; out_maps['Ds'][indices] = map_scaled[:, 3]; out_maps['Ds2'][indices] = map_scaled[:, 4]
-        out_maps['f_slow'][indices] = np.clip(100.0 - (map_scaled[:, 0] + map_scaled[:, 1]), 0, 100)
+        bn = inputNode.GetName()
+        final_D_node = self.save_volume(out_maps['D'], refNode, f"{bn}_{method}_D_Map")
+        self.force_show_volume(final_D_node)
 
-    
-    bn = inputNode.GetName()
-    final_D_node = self.save_volume(out_maps['D'], refNode, f"{bn}_{method}_D_Map")
-    self.force_show_volume(final_D_node)
+        if map_method != "adc":
+            self.save_volume(out_maps['f'], refNode, f"{bn}_{method}_f_Map")
+            self.save_volume(out_maps['Ds'], refNode, f"{bn}_{method}_Ds_Map")
+        if map_method == "triexp":
+            self.save_volume(out_maps['f2'], refNode, f"{bn}_{method}_f_Interm")
+            self.save_volume(out_maps['Ds2'], refNode, f"{bn}_{method}_Ds_Interm")
+            self.save_volume(out_maps['f_slow'], refNode, f"{bn}_{method}_f_Slow")
+    else:
+        import logging# Harita oluşturulmayacaksa progress bar'ı gizle ve log düş
+        logging.info("Map generation skipped. Calculating only ROI average.")
+        if progressBar:
+            progressBar.visible = False
+    # --- HARİTA BLOĞU SONU ---
 
-    if map_method != "adc":
-        self.save_volume(out_maps['f'], refNode, f"{bn}_{method}_f_Map")
-        self.save_volume(out_maps['Ds'], refNode, f"{bn}_{method}_Ds_Map")
-    if map_method == "triexp":
-        self.save_volume(out_maps['f2'], refNode, f"{bn}_{method}_f_Interm")
-        self.save_volume(out_maps['Ds2'], refNode, f"{bn}_{method}_Ds_Interm")
-        self.save_volume(out_maps['f_slow'], refNode, f"{bn}_{method}_f_Slow")
-
-    
-    avg_signal = np.mean(signals, axis=0)
+    # ROI ANALİZİ (HER ZAMAN ÇALIŞIR)
+    avg_signal = np.mean(input_array[indices], axis=0) # Maske içindeki ham sinyallerin ortalamasını al
     s0 = avg_signal[0] if avg_signal[0] != 0 else 1.0
     avg_signal_norm = avg_signal / s0
+    b_vals_arr = np.array(b_values, dtype=np.float64) 
     
     roi_params = {}
     fit_curve = np.zeros_like(avg_signal_norm)
+    cb = custom_bounds # Arayüzden gelen kutucuk verileri
     
     try:
         if method == "segmented":
-            p = segmented.fit_biexp_segmented(b_vals_arr, avg_signal_norm, split_b=split_b)
+            p0_seg = [cb['f']['init'], cb['Ds']['init']] if 'f' in cb else None
+            bnds_seg = ([cb['f']['low'], cb['Ds']['low']], [cb['f']['high'], cb['Ds']['high']]) if 'f' in cb else None
+            p = segmented.fit_biexp_segmented(b_vals_arr, avg_signal_norm, split_b=split_b, p0=p0_seg, bounds=bnds_seg)
             roi_params = {'f': p[0], 'D': p[1], 'Ds': p[2]}
             fit_curve = biexp.biexp_model(b_vals_arr, p[0], p[1], p[2])
+            
         elif method == "adc":
-            d = adc.fit_adc(b_vals_arr, avg_signal_norm)
+            p0_adc = [cb['ADC']['init']] if 'ADC' in cb else None
+            bnds_adc = (cb['ADC']['low'], cb['ADC']['high']) if 'ADC' in cb else None # Parantez formatı değişti
+            d = adc.fit_adc(b_vals_arr, avg_signal_norm, p0=p0_adc, bounds=bnds_adc)
             roi_params = {'D': d}
             fit_curve = adc.monoexp_model(b_vals_arr, d)
+            
         elif method == "biexp":
-            p = biexp.fit_biexp_free(b_vals_arr, avg_signal_norm)
+            p0_biexp = [cb['f']['init'], cb['D']['init'], cb['Ds']['init']] if 'f' in cb else None
+            bnds_biexp = ([cb['f']['low'], cb['D']['low'], cb['Ds']['low']], [cb['f']['high'], cb['D']['high'], cb['Ds']['high']]) if 'f' in cb else None
+            p = biexp.fit_biexp_free(b_vals_arr, avg_signal_norm, p0=p0_biexp, bounds=bnds_biexp)
             roi_params = {'f': p[0], 'D': p[1], 'Ds': p[2]}
             fit_curve = biexp.biexp_model(b_vals_arr, p[0], p[1], p[2])
+            
         elif method == "triexp":
-            p = triexp.fit_triexp_free(b_vals_arr, avg_signal_norm)
+            p0_tri = [cb['f_fast']['init'], cb['f_inter']['init'], cb['D_slow_tri']['init'], cb['D_fast_tri']['init'], cb['D_inter_tri']['init']] if 'f_fast' in cb else None
+            bnds_tri = ([cb['f_fast']['low'], cb['f_inter']['low'], cb['D_slow_tri']['low'], cb['D_fast_tri']['low'], cb['D_inter_tri']['low']], [cb['f_fast']['high'], cb['f_inter']['high'], cb['D_slow_tri']['high'], cb['D_fast_tri']['high'], cb['D_inter_tri']['high']]) if 'f_fast' in cb else None
+            p = triexp.fit_triexp_free(b_vals_arr, avg_signal_norm, p0=p0_tri, bounds=bnds_tri)
             roi_params = {'f': p[0], 'f2': p[1], 'D': p[2], 'Ds': p[3], 'Ds2': p[4]}
             fit_curve = triexp.triexp_model(b_vals_arr, p[0], p[1], p[2], p[3], p[4])
+            
         elif method == "bayesian_fast" and 'bayesian' in locals():
-            p = bayesian.fit_bayesian(b_vals_arr, avg_signal_norm, draws=2000, chains=1, cores=1, progressbar=False)
+            priors = {'f_min': cb['f']['low'], 'f_max': cb['f']['high'], 'D_min': cb['D']['low'], 'D_max': cb['D']['high'], 'Ds_min': cb['Ds']['low'], 'Ds_max': cb['Ds']['high']} if 'f' in cb else None
+            p = bayesian.fit_bayesian(b_vals_arr, avg_signal_norm, draws=2000, chains=1, cores=1, progressbar=False, custom_priors=priors)
             roi_params = {'f': p[0], 'D': p[1], 'Ds': p[2], 'r_hat': p[3]}
             fit_curve = biexp.biexp_model(b_vals_arr, p[0], p[1], p[2])
             
         elif method == "bayesian_quality" and 'bayesian' in locals():
-            p = bayesian.fit_bayesian(b_vals_arr, avg_signal_norm, draws=10000, chains=3, cores=1, progressbar=False)
+            priors = {'f_min': cb['f']['low'], 'f_max': cb['f']['high'], 'D_min': cb['D']['low'], 'D_max': cb['D']['high'], 'Ds_min': cb['Ds']['low'], 'Ds_max': cb['Ds']['high']} if 'f' in cb else None
+            p = bayesian.fit_bayesian(b_vals_arr, avg_signal_norm, draws=10000, chains=3, cores=1, progressbar=False, custom_priors=priors)
             roi_params = {'f': p[0], 'D': p[1], 'Ds': p[2], 'r_hat': p[3]}
             fit_curve = biexp.biexp_model(b_vals_arr, p[0], p[1], p[2])
-    except: pass
+    except Exception as e:
+        print(f"\n🚨 HATA YAKALANDI ({method}): {e}")
+        import traceback
+        traceback.print_exc()
+        print("🚨----------------------------------------\n")
 
     ss_res = np.sum((avg_signal_norm - fit_curve)**2)
     ss_tot = np.sum((avg_signal_norm - np.mean(avg_signal_norm))**2)
@@ -684,12 +818,67 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     slicer.util.updateVolumeFromArray(v, data)
     v.SetAttribute("Quantities", "Scalar")
     d = v.GetDisplayNode()
-    if d and data.max()>0:
-        d.AutoWindowLevelOff(); flat = data.flatten(); vld = flat[flat>0]
-        if vld.size>0: p1=np.percentile(vld,1); p99=np.percentile(vld,99); d.SetWindowLevel(p99-p1, p1+(p99-p1)/2)
+    
+    if d:
+        # 1. Renk Haritasını ID ile doğrudan ve garantili ata
+        # dGEMRIC-1.5T için standart Slicer ID'si budur.
+        dGEMRIC_ID = "vtkMRMLColorTableNodeFiledGEMRIC-1.5T.txt"
+        
+        # Slicer'da bu ID'ye sahip bir node var mı bak, yoksa sahnede ara
+        colorNode = slicer.mrmlScene.GetNodeByID(dGEMRIC_ID)
+        if not colorNode:
+            # Eğer ID ile bulunamazsa (bazen sahneye henüz eklenmemiştir), 
+            # ismiyle bulmayı dene veya varsayılan bir tane ata
+            colorNode = slicer.mrmlScene.GetFirstNodeByName("dGEMRIC-1.5T")
+            
+        if colorNode:
+            d.SetAndObserveColorNodeID(colorNode.GetID())
+        else:
+            # Eğer dGEMRIC bulunamazsa hata verip siyah göstermek yerine 
+            # standart "ColdToHotRainbow" kullan (en azından görüntü gelir)
+            d.SetAndObserveColorNodeID("vtkMRMLColorTableNodeFileColdToHotRainbow.txt")
+        
+        # 2. PARAMETREYE ÖZEL DİNAMİK THRESHOLD (Sizin öneriniz)
+        d.AutoThresholdOff()
+        
+        # Scale yapılmış değerler için alt sınır belirleme
+        if data.max() > 2.0: 
+            if "_f_" in name or "f_Slow" in name or "f_Interm" in name:
+                d.SetLowerThreshold(0.1)  # %0.1 altını artifact kabul et
+            elif "_D_" in name:
+                d.SetLowerThreshold(10.0) # 10*10^-6 altını temizle
+            elif "_Ds_" in name:
+                d.AutoThresholdOn()
+            else:
+                d.AutoThresholdOff()
+            
+                d.SetLowerThreshold(1e-6)
+        else:
+            d.SetLowerThreshold(1e-6)
+                
+        d.ApplyThresholdOn()
+        
+        # 3. Akıllı Window/Level Hesaplaması
+        if data.max() > 0:
+            d.AutoWindowLevelOff()
+            vld = data[data > d.GetLowerThreshold()] 
+            
+            if vld.size > 0:
+                p5 = np.percentile(vld, 5)
+                p95 = np.percentile(vld, 95)
+                
+                window = p95 - p5
+                level = p5 + (window / 2.0)
+                
+                if window < 1e-6:
+                    window = vld.max()
+                    level = window / 2.0
+                    
+                d.SetWindowLevel(window, level)
+                
     return v
 
-  def run_fitting(self, b_vals, signals, method, split_b, results, progressBar):
+  def run_fitting(self, b_vals, signals, method, split_b, results,custom_bounds, progressBar):
     
     from ivimfit import adc, biexp, segmented, triexp
     from concurrent.futures import ThreadPoolExecutor
@@ -697,14 +886,52 @@ class IVIMFitSlicerLogic(ScriptedLoadableModuleLogic):
     n_total = len(signals); chunk_size = 500; n_chunks = int(np.ceil(n_total / chunk_size))
     if progressBar: progressBar.setRange(0, n_chunks)
     
+    # --- YENİ: Limits ve Initials Hazırlığı ---
+    cb = custom_bounds
+    p0_adc = bnds_adc = p0_biexp = bnds_biexp = p0_seg = bnds_seg = p0_tri = bnds_tri = None
+    custom_priors = None
+
+    if method == "adc" and 'ADC' in cb:
+        p0_adc = [cb['ADC']['init']]
+        bnds_adc = (cb['ADC']['low'], cb['ADC']['high'])
+        
+    elif method == "biexp" and 'f' in cb:
+        p0_biexp = [cb['f']['init'], cb['D']['init'], cb['Ds']['init']]
+        bnds_biexp = ([cb['f']['low'], cb['D']['low'], cb['Ds']['low']],
+                      [cb['f']['high'], cb['D']['high'], cb['Ds']['high']])
+                      
+    elif method in ["segmented", "bayesian"] and 'f' in cb:
+        p0_seg = [cb['f']['init'], cb['Ds']['init']]
+        bnds_seg = ([cb['f']['low'], cb['Ds']['low']],
+                    [cb['f']['high'], cb['Ds']['high']])
+        # Bayesian için ek prior sözlüğü
+        custom_priors = {
+            'f_min': cb['f']['low'], 'f_max': cb['f']['high'],
+            'D_min': cb['D']['low'], 'D_max': cb['D']['high'],
+            'Ds_min': cb['Ds']['low'], 'Ds_max': cb['Ds']['high']
+        }
+                    
+    elif method == "triexp" and 'f_fast' in cb:
+        # ivimfit sırası: f1(fast), f2(inter), D(slow), D1*(fast), D2*(inter)
+        p0_tri = [cb['f_fast']['init'], cb['f_inter']['init'], cb['D_slow_tri']['init'], cb['D_fast_tri']['init'], cb['D_inter_tri']['init']]
+        bnds_tri = ([cb['f_fast']['low'], cb['f_inter']['low'], cb['D_slow_tri']['low'], cb['D_fast_tri']['low'], cb['D_inter_tri']['low']],
+                    [cb['f_fast']['high'], cb['f_inter']['high'], cb['D_slow_tri']['high'], cb['D_fast_tri']['high'], cb['D_inter_tri']['high']])
+
     def worker(start_idx):
         end = min(start_idx + chunk_size, n_total); chunk = signals[start_idx:end]; res = np.zeros((len(chunk), 5), dtype=np.float32)
         for i, sig in enumerate(chunk):
             try:
-                if method in ["segmented", "bayesian"]: r = segmented.fit_biexp_segmented(b_vals, sig, split_b=split_b); res[i, :3] = r
-                elif method == "adc": res[i, 0] = adc.fit_adc(b_vals, sig)
-                elif method == "biexp": r = biexp.fit_biexp_free(b_vals, sig); res[i, :3] = r
-                elif method == "triexp": r = triexp.fit_triexp_free(b_vals, sig); res[i] = r
+                if method in ["segmented", "bayesian"]: 
+                    r = segmented.fit_biexp_segmented(b_vals, sig, split_b=split_b, p0=p0_seg, bounds=bnds_seg)
+                    res[i, :3] = r
+                elif method == "adc": 
+                    res[i, 0] = adc.fit_adc(b_vals, sig, p0=p0_adc, bounds=bnds_adc)
+                elif method == "biexp": 
+                    r = biexp.fit_biexp_free(b_vals, sig, p0=p0_biexp, bounds=bnds_biexp)
+                    res[i, :3] = r
+                elif method == "triexp": 
+                    r = triexp.fit_triexp_free(b_vals, sig, p0=p0_tri, bounds=bnds_tri)
+                    res[i] = r
             except: pass
         return start_idx, res
         

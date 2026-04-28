@@ -54,10 +54,10 @@ It integrates the power of the `ivimfit` Python library directly into the clinic
 
 ---
 
-## ⚡ Advanced Setup for MCMC (Bayesian Quality Mode)
-*Optional: Only required for the "Bayesian (Quality - 10000d/3c)" algorithm.*
+## ⚡ Advanced Setup for MCMC (Bayesian Mode) Strongly Recommended
+*Optional: Only required for the "Bayesian " algorithm.*
 
-The **Bayesian Quality** mode performs extensive Markov Chain Monte Carlo (MCMC) sampling (10,000 draws, 3 chains) to provide highly accurate parameter estimations and Gelman-Rubin (R-hat) convergence statistics. 
+The **Bayesian ** mode performs extensive Markov Chain Monte Carlo (MCMC) sampling (10,000 draws, 3 chains) to provide highly accurate parameter estimations and Gelman-Rubin (R-hat) convergence statistics. 
 
 **The Computational Bottleneck:**
 Computing massive MCMC chains in pure Python can take hours or even a full day. To achieve high performance, the underlying `PyMC`/`PyTensor` engine attempts to compile the mathematical models into C++ code. However, 3D Slicer's embedded Python environment is stripped down to save space and lacks the necessary C++ headers (`include`) and linking libraries (`libs`).
@@ -80,8 +80,8 @@ If you want to run the Quality mode in minutes rather than days, you must manual
 3. **Fix the Headers (`include`):**
    * Go to your system's standard Python folder and copy the entire `include` folder (which contains `Python.h`).
    * Paste it directly into Slicer's Python directory (next to the `libs` folder you just created).
-4. **Restart 3D Slicer:**
-   Run the Bayesian Quality mode. The system will now detect `g++` and the header files, compiling the model in seconds and unlocking maximum hardware performance.
+4. **Restart 3D Slicer as Administrative Mode:**
+   Run the Bayesian  mode. The system will now detect `g++` and the header files, compiling the model in seconds and unlocking maximum hardware performance.
 
 ---
 
