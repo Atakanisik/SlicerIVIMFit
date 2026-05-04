@@ -83,6 +83,36 @@ If you want to run the Quality mode in minutes rather than days, you must manual
 4. **Restart 3D Slicer as Administrative Mode:**
    Run the Bayesian  mode. The system will now detect `g++` and the header files, compiling the model in seconds and unlocking maximum hardware performance.
 
+### 🐧 Linux Setup (Ubuntu/Debian)
+
+Unlike Windows, Linux systems dynamically link shared objects (`.so`), so the process is simpler.
+
+**1. Install Compiler & Headers:**
+Open your terminal and run:
+`sudo apt-get update`
+`sudo apt-get install build-essential python3.9-dev` *(Change 3.9 to match Slicer's Python version)*
+
+**2. Link the Headers:**
+* Navigate to Slicer's Python directory: `~/Slicer-5.x.x-linux-amd64/lib/Python`
+* Create a folder named `include`.
+* Copy your system's python headers (usually in `/usr/include/python3.x`) into this folder. *(Alternatively: `ln -s /usr/include/python3.x ~/Slicer-path/lib/Python/include`)*
+
+---
+
+### 🍎 macOS Setup
+
+macOS uses Apple's Clang compiler instead of standard GCC.
+
+**1. Install C++ Compiler:**
+Open Terminal and run:
+`xcode-select --install`
+
+**2. Link the Headers:**
+* Right-click `Slicer.app` -> **Show Package Contents**.
+* Navigate to: `Contents/lib/Python`
+* Create an `include` folder.
+* Copy the `include` folder from your standard Python installation (usually in `/Library/Frameworks/Python.framework/Versions/3.x/include/`) into Slicer's newly created `include` folder.
+
 ---
 
 **Strategic Design Choice regarding Parametric Mapping:**
