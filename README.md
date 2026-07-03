@@ -196,6 +196,28 @@ You can find Sample Data on Slicer's Sample Data Module
 
 ---
 
+## 🧪 Testing / Verification
+
+The extension ships an automated self-test suite at
+`IVIMFitSlicer/Testing/Python/test_IVIMFitSlicer_roundtrip.py`, which verifies the full
+fitting pipeline against synthetic phantoms with **known** IVIM parameters.
+
+Run it in the 3D Slicer **Python Console** (with the IVIMFitSlicer module loaded once):
+
+```python
+import sys; sys.path.insert(0, r"<path-to-repo>/IVIMFitSlicer/Testing/Python")
+import test_IVIMFitSlicer_roundtrip as t
+t.run()                        # expected: 9/9 passed
+t.run(include_bayesian=True)   # also runs a Bayesian smoke test (installs PyMC on first use)
+```
+
+The suite covers: exact round-trip parameter recovery for the mono-exponential, free, and
+segmented estimators; fit-quality and structural validity for the tri-exponential model; a
+Bayesian smoke test; and input-guard (b-value / frame handling, empty mask) and
+noise-robustness checks.
+
+---
+
 ## 📄 License & Citation
 
 **Author:** Atakan Isik (Baskent University)  
