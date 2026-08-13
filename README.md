@@ -222,7 +222,7 @@ noise-robustness checks.
 
 **Author:** Atakan Isik (Baskent University)  
 **License:** MIT License.
-If you use this software in your research, please cite the associated repository or publication[10.36948/ijfmr.2025.v07i05.56036](https://doi.org/10.36948/ijfmr.2025.v07i05.56036).
+If you use this software in your research, please cite the associated repository or publications[10.36948/ijfmr.2025.v07i05.56036](https://doi.org/10.36948/ijfmr.2025.v07i05.56036),[10.1016/j.softx.2026.102936](https://doi.org/10.1016/j.softx.2026.102936).
 
 ---
 
